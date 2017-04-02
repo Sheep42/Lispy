@@ -28,6 +28,24 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
+//Recursively counts the total number of nodes in our Abstract Syntax Tree
+int numberOfNodes(mpc_ast_t* tree) {
+    if(tree->children_num == 0)
+        return 1;
+
+    if(tree->children_num >= 1) {
+        int total = 1;
+
+        for(int i = 0; i < tree->children_num; i++) {
+            total += numberOfNodes(tree->children[i]);
+        }
+
+        return total;
+    }
+
+    return 0;
+}
+
 int main(int argc, char** argv) {
     /* Create some parsers */
     mpc_parser_t* Number = mpc_new("number");
@@ -39,7 +57,7 @@ int main(int argc, char** argv) {
     mpca_lang(MPCA_LANG_DEFAULT,
         "                                                       \
             number   :  /-?[0-9]+/ ;                            \
-            operator :  '+' | '-' | '*' | '/' ;                 \
+            operator :  '+' | '-' | '*' | '/' | '%' | \"add\" | \"sub\" | \"mul\" | \"div\" | \"mod\";                 \
             expr     :  <number> | '(' <operator> <expr>+ ')' ; \
             lispy    :  /^/ <operator> <expr>+ /$/ ;            \
         ",
@@ -59,16 +77,20 @@ int main(int argc, char** argv) {
         add_history(input);
 
         /* Attempt to parse user input */
-        mpc_result_t r;
+        mpc_result_t result;
 
-        if(mpc_parse("<stdin>", input, Lispy, &r)) {
-            /* On success print the AST */
-            mpc_ast_print(r.output);
-            mpc_ast_delete(r.output);
+        if(mpc_parse("<stdin>", input, Lispy, &result)) {
+            /* Load the Abstract Syntax Tree from output */
+            mpc_ast_t* ast = result.output;
+            printf("Tag: %s\n", ast->tag);
+            printf("Contents: %s\n", ast->contents);
+            printf("Number of children: %i\n", ast->children_num);
+
+            printf("Number of nodes: %i\n", numberOfNodes(ast));
         } else {
             /* Otherwise print the error */
-            mpc_err_print(r.error);
-            mpc_err_delete(r.error);
+            mpc_err_print(result.error);
+            mpc_err_delete(result.error);
         }
 
         /* Free retrieved input */
