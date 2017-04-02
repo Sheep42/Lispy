@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
+
 #include "mpc.h"
 
 /* If compiling on windows use these */
@@ -28,59 +30,130 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
-//Recursively counts the total number of nodes in our Abstract Syntax Tree
-int numberOfNodes(mpc_ast_t* tree) {
-    if(tree->children_num == 0)
-        return 1;
+/* Structs */
+    /* Set up the basic lisp value struct to handle interpreter output */
+    typedef struct {
+        int type;
+        double num;
+        int err;
+    } lval;
 
-    if(tree->children_num >= 1) {
-        int total = 1;
+    //LVAL types
+    enum { LVAL_NUM, LVAL_ERR };
 
-        for(int i = 0; i < tree->children_num; i++) {
-            total += numberOfNodes(tree->children[i]);
+    //LVAL Error Types
+    enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
+
+/* Functions */
+    //Recursively counts the total number of nodes in our Abstract Syntax Tree
+    int number_of_nodes(mpc_ast_t* tree) {
+        if(tree->children_num == 0)
+            return 1;
+
+        if(tree->children_num >= 1) {
+            int total = 1;
+
+            for(int i = 0; i < tree->children_num; i++) {
+                total += number_of_nodes(tree->children[i]);
+            }
+
+            return total;
         }
 
-        return total;
+        return 0;
     }
 
-    return 0;
-}
+    //Create a new number type lval
+    lval lval_num(long x) {
+        lval val;
 
-//Evaluates an operation
-long eval_op(long x, char* op, long y) {
-    if(strcmp(op, "+") == 0 || strcmp(op, "add") == 0) return x + y;
-    if(strcmp(op, "-") == 0 || strcmp(op, "sub") == 0) return x - y;
-    if(strcmp(op, "*") == 0 || strcmp(op, "mul") == 0) return x * y;
-    if(strcmp(op, "/") == 0 || strcmp(op, "div") == 0) return x / y;
-    if(strcmp(op, "%") == 0 || strcmp(op, "mod") == 0) return x % y;
-    if(strcmp(op, "^") == 0 || strcmp(op, "pow") == 0) return pow(x, y);
+        val.type = LVAL_NUM;
+        val.num = x;
 
-    return 0;
-}
-
-//Evaluates an expression
-long eval(mpc_ast_t* tree) {
-    /* If tagged as number return it directly */
-    if(strstr(tree->tag, "number")) {
-        return atoi(tree->contents);
+        return val;
     }
 
-    /* The operator is always second child */
-    char* op = tree->children[1]->contents;
+    //Create a new error type lval
+    lval lval_err(int x) {
+        lval val;
 
-    /* Store the third child in 'x' */
-    long x = eval(tree->children[2]);
+        val.type = LVAL_ERR;
+        val.err = x;
 
-    /* Iterate the remaining children and combine */
-    int i = 3;
-    while(strstr(tree->children[i]->tag, "expr")) {
-        x = eval_op(x, op, eval(tree->children[i]));
-        i++;
+        return val;
     }
 
-    return x;
-}
+    //Evaluates an operation
+    lval eval_op(lval x, char* op, lval y) {
+        //If either input is an error return it
+        if(x.type == LVAL_ERR) return x;
+        if(y.type == LVAL_ERR) return y;
 
+        //Else evaluate the operations
+        if(strcmp(op, "+") == 0 || strcmp(op, "add") == 0) return lval_num(x.num + y.num);
+        if(strcmp(op, "-") == 0 || strcmp(op, "sub") == 0) return lval_num(x.num - y.num);
+        if(strcmp(op, "*") == 0 || strcmp(op, "mul") == 0) return lval_num(x.num * y.num);
+        if(strcmp(op, "/") == 0 || strcmp(op, "div") == 0) {
+            return (y.num == 0) ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
+        }
+        if(strcmp(op, "%") == 0 || strcmp(op, "mod") == 0) return lval_num(fmod(x.num, y.num));
+        if(strcmp(op, "^") == 0 || strcmp(op, "pow") == 0) return lval_num(pow(x.num, y.num));
+
+        return lval_err(LERR_BAD_OP);
+    }
+
+    //Evaluates an expression
+    lval eval(mpc_ast_t* tree) {
+        /* If tagged as number return it directly */
+        if(strstr(tree->tag, "number")) {
+            //Check conversion for errors
+            errno = 0;
+            double x = strtold(tree->contents, NULL);
+            return (errno != ERANGE) ? lval_num(x) : lval_err(LERR_BAD_NUM);
+        }
+
+        /* The operator is always second child */
+        char* op = tree->children[1]->contents;
+
+        /* Store the third child in 'x' */
+        lval x = eval(tree->children[2]);
+
+        /* Iterate the remaining children and combine */
+        int i = 3;
+        while(strstr(tree->children[i]->tag, "expr")) {
+            x = eval_op(x, op, eval(tree->children[i]));
+            i++;
+        }
+
+        return x;
+    }
+
+    void lval_print(lval val) {
+        switch(val.type) {
+            //If lval is type LVAL_NUM, print it and break
+            case LVAL_NUM:
+                printf("%.2f", roundf(val.num));
+                break;
+
+            //If lval is type LVAL_ERR, check it's error type and print it
+            case LVAL_ERR:
+                if(val.err == LERR_DIV_ZERO)
+                    printf("Error: Divide by Zero");
+                else if(val.err == LERR_BAD_OP)
+                    printf("Error: Invalid operation");
+                else if(val.err == LERR_BAD_NUM)
+                    printf("Errpr: Invalid number");
+
+                break;
+        }
+    }
+
+    void lval_println(lval val) {
+        lval_print(val);
+        putchar('\n');
+    }
+
+/* Main */
 int main(int argc, char** argv) {
     /* Create some parsers */
     mpc_parser_t* Number = mpc_new("number");
@@ -116,10 +189,10 @@ int main(int argc, char** argv) {
 
         if(mpc_parse("<stdin>", input, Lispy, &result)) {
             /* Evaluate the Abstract Syntax Tree from output */
-            long evalResult = eval(result.output);
+            lval evalResult = eval(result.output);
 
             /* Print the result */
-            printf("%li\n", evalResult);
+            lval_println(evalResult);
 
             /* Delete the result when we are done */
             mpc_ast_delete(result.output);
