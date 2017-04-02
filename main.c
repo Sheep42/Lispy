@@ -46,6 +46,41 @@ int numberOfNodes(mpc_ast_t* tree) {
     return 0;
 }
 
+//Evaluates an operation
+long eval_op(long x, char* op, long y) {
+    if(strcmp(op, "+") == 0 || strcmp(op, "add") == 0) return x + y;
+    if(strcmp(op, "-") == 0 || strcmp(op, "sub") == 0) return x - y;
+    if(strcmp(op, "*") == 0 || strcmp(op, "mul") == 0) return x * y;
+    if(strcmp(op, "/") == 0 || strcmp(op, "div") == 0) return x / y;
+    if(strcmp(op, "%") == 0 || strcmp(op, "mod") == 0) return x % y;
+    if(strcmp(op, "^") == 0 || strcmp(op, "pow") == 0) return pow(x, y);
+
+    return 0;
+}
+
+//Evaluates an expression
+long eval(mpc_ast_t* tree) {
+    /* If tagged as number return it directly */
+    if(strstr(tree->tag, "number")) {
+        return atoi(tree->contents);
+    }
+
+    /* The operator is always second child */
+    char* op = tree->children[1]->contents;
+
+    /* Store the third child in 'x' */
+    long x = eval(tree->children[2]);
+
+    /* Iterate the remaining children and combine */
+    int i = 3;
+    while(strstr(tree->children[i]->tag, "expr")) {
+        x = eval_op(x, op, eval(tree->children[i]));
+        i++;
+    }
+
+    return x;
+}
+
 int main(int argc, char** argv) {
     /* Create some parsers */
     mpc_parser_t* Number = mpc_new("number");
@@ -57,7 +92,7 @@ int main(int argc, char** argv) {
     mpca_lang(MPCA_LANG_DEFAULT,
         "                                                       \
             number   :  /-?[0-9]+/ ;                            \
-            operator :  '+' | '-' | '*' | '/' | '%' | \"add\" | \"sub\" | \"mul\" | \"div\" | \"mod\";                 \
+            operator :  '+' | '-' | '*' | '/' | '%' | '^' | \"add\" | \"sub\" | \"mul\" | \"div\" | \"mod\" | \"pow\";                 \
             expr     :  <number> | '(' <operator> <expr>+ ')' ; \
             lispy    :  /^/ <operator> <expr>+ /$/ ;            \
         ",
@@ -80,13 +115,14 @@ int main(int argc, char** argv) {
         mpc_result_t result;
 
         if(mpc_parse("<stdin>", input, Lispy, &result)) {
-            /* Load the Abstract Syntax Tree from output */
-            mpc_ast_t* ast = result.output;
-            printf("Tag: %s\n", ast->tag);
-            printf("Contents: %s\n", ast->contents);
-            printf("Number of children: %i\n", ast->children_num);
+            /* Evaluate the Abstract Syntax Tree from output */
+            long evalResult = eval(result.output);
 
-            printf("Number of nodes: %i\n", numberOfNodes(ast));
+            /* Print the result */
+            printf("%li\n", evalResult);
+
+            /* Delete the result when we are done */
+            mpc_ast_delete(result.output);
         } else {
             /* Otherwise print the error */
             mpc_err_print(result.error);
