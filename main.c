@@ -30,6 +30,9 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
+#define LASSERT(args, cond, err) \
+  if (!(cond)) { lval_del(args); return lval_err(err); }
+
 /* Structs */
     /* Set up the basic lisp value struct to handle interpreter output */
     typedef struct lval {
@@ -46,7 +49,7 @@ void add_history(char* unused) {}
     } lval;
 
     //LVAL types
-    enum { LVAL_NUM, LVAL_SYM, LVAL_SEXPR, LVAL_ERR };
+    enum { LVAL_NUM, LVAL_SYM, LVAL_SEXPR, LVAL_QEXPR, LVAL_ERR };
 
 /* Functions */
     //Forward definers
@@ -71,6 +74,7 @@ void add_history(char* unused) {}
         return 0;
     }
 
+/* Constructor functions */
     //Create a new number type lval
     lval* lval_num(long x) {
         lval* val = malloc(sizeof(lval));
@@ -93,11 +97,22 @@ void add_history(char* unused) {}
         return val;
     }
 
-    //Create a new number type lval
+    //Create a new s-expr type lval
     lval* lval_sexpr(void) {
         lval* val = malloc(sizeof(lval));
 
         val->type = LVAL_SEXPR;
+        val->count = 0;
+        val->cell = NULL;
+
+        return val;
+    }
+
+    //Create a new q-expr type lval
+    lval* lval_qexpr(void) {
+        lval* val = malloc(sizeof(lval));
+
+        val->type = LVAL_QEXPR;
         val->count = 0;
         val->cell = NULL;
 
@@ -115,6 +130,7 @@ void add_history(char* unused) {}
         return val;
     }
 
+/* LVAL Util Functions */
     //Deletes an lval and frees the allocated memory
     void lval_del(lval* val) {
         switch(val->type) {
@@ -125,7 +141,8 @@ void add_history(char* unused) {}
             case LVAL_ERR: free(val->err); break;
             case LVAL_SYM: free(val->symbol); break;
 
-            //If s-expression then delete all elements inside
+            //If q-expression or s-expression then delete all elements inside
+            case LVAL_QEXPR:
             case LVAL_SEXPR:
 
                 for(int i = 0; i < val->count; i++) {
@@ -173,6 +190,9 @@ void add_history(char* unused) {}
         if(strcmp(tree->tag, ">") == 0 || strstr(tree->tag, "sexpr"))
             val = lval_sexpr();
 
+        if(strstr(tree->tag, "qexpr"))
+            val = lval_qexpr();
+
         //Fill the list with any valid expression contained within
         for(int i = 0; i < tree->children_num; i++) {
             if(strcmp(tree->children[i]->contents, "(") == 0) continue;
@@ -211,6 +231,16 @@ void add_history(char* unused) {}
         lval_del(val);
 
         return takeVal;
+    }
+
+    //Evaluate an s-expression
+    lval* lval_eval(lval* val) {
+        //Evaluate s-expressions
+        if(val->type == LVAL_SEXPR)
+            return lval_eval_sexpr(val);
+
+        //All other lval types remain the same
+        return val;
     }
 
     //Perform an operation on an expression
@@ -276,14 +306,92 @@ void add_history(char* unused) {}
         return x;
     }
 
-    //Evaluate an s-expression
-    lval* lval_eval(lval* val) {
-        //Evaluate s-expressions
-        if(val->type == LVAL_SEXPR)
-            return lval_eval_sexpr(val);
+    lval* builtin_head(lval* val) {
+        //Check error conditions
+        LASSERT(val, val->count == 1, "Argument Error: Function 'head' was passed too many arguments.");
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'head' expects type Q-Expression.");
+        LASSERT(val, val->cell[0]->count != 0, "Empty Expression: Function 'head' expects at least one value. Passed: {}");
 
-        //All other lval types remain the same
+        //Otherwise take first arg
+        lval* newVal = lval_take(val, 0);
+
+        //Delete all elements that are not the head and return
+        while(newVal->count > 1) {
+            lval_del(lval_pop(newVal, 1));
+        }
+
+        return newVal;
+    }
+
+    lval* builtin_tail(lval* val) {
+        //Check error conditions
+        LASSERT(val, val->count == 1, "Argument Error: Function 'tail' was passed too many arguments.");
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'tail' expects type Q-Expression.");
+        LASSERT(val, val->cell[0]->count != 0, "Empty Expression: Function 'tail' expects at least one value. Passed: {}");
+
+        //Otherwise take first arg
+        lval* newVal = lval_take(val, 0);
+
+        //Delete the first and return
+        lval_del(lval_pop(newVal, 0));
+
+        return newVal;
+    }
+
+    lval* builtin_list(lval* val) {
+        val->type = LVAL_QEXPR;
         return val;
+    }
+
+    lval* builtin_eval(lval* val) {
+        LASSERT(val, val->count == 1, "Argument Error: Function 'eval' passed too many arguments.");
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'eval' expects type Q-Expression.");
+
+        lval* result = lval_take(val, 0);
+        result->type = LVAL_SEXPR;
+
+        return lval_eval(result);
+    }
+
+    lval* lval_join(lval* exp1, lval* exp2) {
+        //For each cell in 'exp2' add it to 'exp1'
+        while(exp2->count) {
+            exp1 = lval_add(exp1, lval_pop(exp2, 0));
+        }
+
+        //Delete the empty 'exp2'
+        lval_del(exp2);
+
+        return exp1;
+    }
+
+    lval* builtin_join(lval* val) {
+        for(int i = 0; i < val->count; i++) {
+            LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'join' expects type Q-Expression.");
+        }
+
+        lval* result = lval_pop(val, 0);
+
+        while(val->count) {
+            result = lval_join(result, lval_pop(val, 0));
+        }
+
+        lval_del(val);
+
+        return result;
+    }
+
+    lval* builtin(lval* val, char* func) {
+        if (strcmp("list", func) == 0) { return builtin_list(val); }
+        if (strcmp("head", func) == 0) { return builtin_head(val); }
+        if (strcmp("tail", func) == 0) { return builtin_tail(val); }
+        if (strcmp("join", func) == 0) { return builtin_join(val); }
+        if (strcmp("eval", func) == 0) { return builtin_eval(val); }
+        if (strstr("+-/*^", func)) { return builtin_op(val, func); }
+
+        lval_del(val);
+
+        return lval_err("Unknown Function!");
     }
 
     lval* lval_eval_sexpr(lval* val) {
@@ -316,7 +424,7 @@ void add_history(char* unused) {}
         }
 
         //Call builtin with operator
-        lval* result = builtin_op(val, first->symbol);
+        lval* result = builtin(val, first->symbol);
         lval_del(first);
 
         return result;
@@ -359,6 +467,10 @@ void add_history(char* unused) {}
             case LVAL_SEXPR:
                 lval_expr_print(val, '(', ')');
                 break;
+
+            case LVAL_QEXPR:
+                lval_expr_print(val, '{', '}');
+                break;
         }
     }
 
@@ -373,19 +485,23 @@ int main(int argc, char** argv) {
     mpc_parser_t* Number = mpc_new("number");
     mpc_parser_t* Symbol = mpc_new("symbol");
     mpc_parser_t* Sexpr = mpc_new("sexpr");
+    mpc_parser_t* Qexpr = mpc_new("qexpr");
     mpc_parser_t* Expr = mpc_new("expr");
     mpc_parser_t* Lispy = mpc_new("lispy");
 
     /* Define the parsers */
     mpca_lang(MPCA_LANG_DEFAULT,
-        "                                                       \
-            number   :  /-?[0-9]+/ ;                            \
-            symbol   :  '+' | '-' | '*' | '/' | '%' | '^' ;     \
-            sexpr    :  '(' <expr>* ')' ;                       \
-            expr     :  <number> | <symbol> | <sexpr> ; \
-            lispy    :  /^/ <expr>* /$/ ;            \
+        "                                                         \
+            number   :  /-?[0-9]+/ ;                              \
+            symbol   :  \"list\" | \"head\" | \"tail\"            \
+                     |  \"join\" | \"eval\" | '+' | '-'           \
+                     |  '*' | '/' | '%' | '^' ;                   \
+            sexpr    :  '(' <expr>* ')' ;                         \
+            qexpr    :  '{' <expr>* '}' ;                         \
+            expr     :  <number> | <symbol> | <sexpr> | <qexpr> ; \
+            lispy    :  /^/ <expr>* /$/ ;                         \
         ",
-        Number, Symbol, Sexpr, Expr, Lispy
+        Number, Symbol, Sexpr, Qexpr, Expr, Lispy
     );
 
     /* Print Version and Exit info */
@@ -425,7 +541,7 @@ int main(int argc, char** argv) {
     }
 
     /* Clean up the parsers */
-    mpc_cleanup(4, Number, Symbol, Sexpr, Expr, Lispy);
+    mpc_cleanup(4, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 
     return 0;
 }
