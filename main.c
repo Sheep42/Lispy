@@ -475,6 +475,29 @@ void add_history(char* unused) {}
         return result;
     }
 
+    lval* builtin_def(lenv* env, lval* val) {
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'def' expects type Q-Expression.");
+
+        //First arg in symbol list
+        lval* syms = val->cell[0];
+
+        //Ensure all elements are symbols
+        for(int i = 0; i < syms->count; i++) {
+            LASSERT(val, syms->cell[i]->type == LVAL_SYM, "Define Error: Function 'def' cannot define non-symbol.");
+        }
+
+        //Check correct number of symbols and vals
+        LASSERT(val, syms->count == val->count - 1, "Define Error: Function 'def' expects equal number of values to symbols.");
+
+        //Assign copies of vals to symbols
+        for(int i = 0; i < syms->count; i++) {
+            lenv_set(env, syms->cell[i], val->cell[i+1]);
+        }
+
+        lval_del(val);
+        return lval_sexpr();
+    }
+
     lval* builtin_add(lenv* env, lval* args) {
         return builtin_op(env, args, "+");
     }
@@ -542,6 +565,9 @@ void add_history(char* unused) {}
         lenv_add_builtin(env, "pow", builtin_pow);
         lenv_add_builtin(env, "%", builtin_mod);
         lenv_add_builtin(env, "mod", builtin_mod);
+
+        //Variable functions
+        lenv_add_builtin(env, "def", builtin_def);
     }
 
     lval* lval_eval_sexpr(lenv* env, lval* val) {
