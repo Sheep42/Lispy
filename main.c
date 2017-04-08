@@ -30,8 +30,11 @@ void add_history(char* unused) {}
 #include <editline/history.h>
 #endif
 
-#define LASSERT(args, cond, err) \
-  if (!(cond)) { lval_del(args); return lval_err(err); }
+#define LASSERT(args, cond, fmt, ...) \
+    if (!(cond)) { \
+        lval_del(args); \
+        return lval_err(fmt, ##__VA_ARGS__); \
+    }
 
 /* Forward definers */
     struct lval;
@@ -43,8 +46,9 @@ void add_history(char* unused) {}
     void lval_print(lval* val);
     void lval_del(lval* val);
     lval* lval_cpy(lval* vals);
-    lval* lval_err(char* msg);
+    lval* lval_err(char* fmt, ...);
     lval* lval_eval_sexpr(lenv* env, lval* val);
+    char* ltype_name(int type);
 
 /* Structs & Function Pointers */
     /* Set up the basic lisp value struct to handle interpreter output */
@@ -125,7 +129,7 @@ void add_history(char* unused) {}
         }
 
         //If no symbol found return err
-        return lval_err("Unbound Symbol");
+        return lval_err("Unbound Symbol: '%s'", val->symbol);
     }
 
     void lenv_set(lenv* env, lval* k, lval* v) {
@@ -205,12 +209,25 @@ void add_history(char* unused) {}
     }
 
     //Create a new error type lval
-    lval* lval_err(char* msg) {
-        lval* val = malloc(sizeof(lval));
+    lval* lval_err(char* fmt, ...) {
 
+        lval* val = malloc(sizeof(lval));
         val->type = LVAL_ERR;
-        val->err = malloc(strlen(msg) + 1);
-        strcpy(val->err, msg);
+
+        //Create va list and initialize it
+        va_list va;
+        va_start(va, fmt);
+
+        val->err = malloc(512);
+
+        //printf the error with the string w/ max of 511 chars
+        vsnprintf(val->err, 511, fmt, va);
+
+        //Reallocate to numer of bytes actually used
+        val->err = realloc(val->err, strlen(val->err) + 1);
+
+        //clean up the va list
+        va_end(va);
 
         return val;
     }
@@ -402,8 +419,8 @@ void add_history(char* unused) {}
 
     lval* builtin_head(lenv* env, lval* val) {
         //Check error conditions
-        LASSERT(val, val->count == 1, "Argument Error: Function 'head' was passed too many arguments.");
-        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'head' expects type Q-Expression.");
+        LASSERT(val, val->count == 1, "Argument Error: Function 'head' was passed too many arguments. Got: %i Expected: %i", val->count, 1);
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'head' expects type Q-Expression. Got: %s Expected: %s", ltype_name(val->cell[0]->type), ltype_name(LVAL_QEXPR));
         LASSERT(val, val->cell[0]->count != 0, "Empty Expression: Function 'head' expects at least one value. Passed: {}");
 
         //Otherwise take first arg
@@ -419,8 +436,8 @@ void add_history(char* unused) {}
 
     lval* builtin_tail(lenv* env, lval* val) {
         //Check error conditions
-        LASSERT(val, val->count == 1, "Argument Error: Function 'tail' was passed too many arguments.");
-        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'tail' expects type Q-Expression.");
+        LASSERT(val, val->count == 1, "Argument Error: Function 'tail' was passed too many arguments. Got: %i Expected: %i", val->count, 1);
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'tail' expects type Q-Expression. Got: %s Expected: %s", ltype_name(val->cell[0]->type), ltype_name(LVAL_QEXPR));
         LASSERT(val, val->cell[0]->count != 0, "Empty Expression: Function 'tail' expects at least one value. Passed: {}");
 
         //Otherwise take first arg
@@ -438,8 +455,8 @@ void add_history(char* unused) {}
     }
 
     lval* builtin_eval(lenv* env, lval* val) {
-        LASSERT(val, val->count == 1, "Argument Error: Function 'eval' passed too many arguments.");
-        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'eval' expects type Q-Expression.");
+        LASSERT(val, val->count == 1, "Argument Error: Function 'eval' passed too many arguments. Got: %i Expected: %i", val->count, 1);
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'eval' expects type Q-Expression. Got: %s Expected: %s", ltype_name(val->cell[0]->type), ltype_name(LVAL_QEXPR));
 
         lval* result = lval_take(val, 0);
         result->type = LVAL_SEXPR;
@@ -461,7 +478,7 @@ void add_history(char* unused) {}
 
     lval* builtin_join(lenv* env, lval* val) {
         for(int i = 0; i < val->count; i++) {
-            LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'join' expects type Q-Expression.");
+            LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'join' expects type Q-Expression. Got: %s", ltype_name(val->cell[0]->type));
         }
 
         lval* result = lval_pop(val, 0);
@@ -476,18 +493,18 @@ void add_history(char* unused) {}
     }
 
     lval* builtin_def(lenv* env, lval* val) {
-        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'def' expects type Q-Expression.");
+        LASSERT(val, val->cell[0]->type == LVAL_QEXPR, "Type Error: Function 'def' expects type Q-Expression. Got: %s", ltype_name(val->cell[0]->type));
 
         //First arg in symbol list
         lval* syms = val->cell[0];
 
         //Ensure all elements are symbols
         for(int i = 0; i < syms->count; i++) {
-            LASSERT(val, syms->cell[i]->type == LVAL_SYM, "Define Error: Function 'def' cannot define non-symbol.");
+            LASSERT(val, syms->cell[i]->type == LVAL_SYM, "Define Error: Function 'def' cannot define non-symbol. Got: %s Expected: %s", ltype_name(syms->cell[i]->type), ltype_name(LVAL_SYM));
         }
 
         //Check correct number of symbols and vals
-        LASSERT(val, syms->count == val->count - 1, "Define Error: Function 'def' expects equal number of values to symbols.");
+        LASSERT(val, syms->count == val->count - 1, "Define Error: Function 'def' expects equal number of values to symbols. Got: %i Expected: %i", syms->count, val->count-1);
 
         //Assign copies of vals to symbols
         for(int i = 0; i < syms->count; i++) {
@@ -654,6 +671,18 @@ void add_history(char* unused) {}
         }
     }
 
+    char* ltype_name(int type) {
+        switch(type) {
+            case LVAL_FUN: return "Function";
+            case LVAL_NUM: return "Number";
+            case LVAL_ERR: return "Error";
+            case LVAL_SYM: return "Symbol";
+            case LVAL_SEXPR: return "S-Expression";
+            case LVAL_QEXPR: return "Q-Expression";
+            default: return "Unknown";
+        }
+    }
+
     void lval_println(lval* val) {
         lval_print(val);
         putchar('\n');
@@ -712,7 +741,7 @@ int main(int argc, char** argv) {
     mpca_lang(MPCA_LANG_DEFAULT,
         "                                                          \
             number   :  /-?[0-9]+/ ;                               \
-            symbol   :  /[a-zA-Z0-9_+\\-*\\/\\\\=<>!&]+/ ;         \
+            symbol   :  /[a-zA-Z0-9_+\\-*^\\/\\\\=<>!&]+/ ;         \
             sexpr    :  '(' <expr>* ')' ;                          \
             qexpr    :  '{' <expr>* '}' ;                          \
             expr     :  <number> | <symbol> | <sexpr> | <qexpr> ;  \
