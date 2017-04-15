@@ -682,6 +682,7 @@ void add_history(char* unused) {}
         return lval_lambda(formals, body);
     }
 
+/* Arithemetic Builtins */
     lval* builtin_add(lenv* env, lval* args) {
         return builtin_op(env, args, "+");
     }
@@ -719,6 +720,150 @@ void add_history(char* unused) {}
         return lval_err("Unknown Function!");
     }
 
+/* Conditional Builtins */
+    lval* builtin_ord(lenv* env, lval* args, char* op) {
+        //Ensure all args are numbers
+        LASSERT_NUM(op, args, 2);
+        LASSERT_TYPE(op, args, 0, LVAL_NUM);
+        LASSERT_TYPE(op, args, 1, LVAL_NUM);
+
+        int cmpResult = 0;
+
+        if(strcmp(op, ">") == 0) {
+            cmpResult = (args->cell[0]->num > args->cell[1]->num);
+        }
+
+        if(strcmp(op, ">=") == 0) {
+            cmpResult = (args->cell[0]->num >= args->cell[1]->num);
+        }
+
+        if(strcmp(op, "<") == 0) {
+            cmpResult = (args->cell[0]->num < args->cell[1]->num);
+        }
+
+        if(strcmp(op, "<=") == 0) {
+            cmpResult = (args->cell[0]->num <= args->cell[1]->num);
+        }
+
+        lval_del(args);
+
+        return lval_num(cmpResult);
+    }
+
+    lval* builtin_gt(lenv* env, lval* args) {
+        return builtin_ord(env, args, ">");
+    }
+
+    lval* builtin_gte(lenv* env, lval* args) {
+        return builtin_ord(env, args, ">=");
+    }
+
+    lval* builtin_lt(lenv* env, lval* args) {
+        return builtin_ord(env, args, "<");
+    }
+
+    lval* builtin_lte(lenv* env, lval* args) {
+        return builtin_ord(env, args, "<=");
+    }
+
+    lval* lval_eq(lval* x, lval* y) {
+        /* Different types are always unequal */
+        if(x->type != y->type)
+            return 0;
+
+        //Compare base upon type
+        switch(x->type) {
+            //Compare num value
+            case LVAL_NUM:
+                return x->num == y->num;
+
+            //Compare string vals
+            case LVAL_ERR:
+                return (strcmp(x->err, y->err) == 0);
+            case LVAL_SYM:
+                return (strcmp(x->symbol, y->symbol) == 0);
+
+            //If builtin compare, otherwise compare formals and body
+            case LVAL_FUN:
+                if(x->builtin || y->builtin)
+                    return x->builtin == y->builtin;
+                else
+                    return lval_eq(x->formals, y->formals) && lval_eq(x->body, y->body);
+
+            //If list compare each element
+            case LVAL_QEXPR:
+            case LVAL_SEXPR:
+                //First check num of elements
+                if(x->count != y->count)
+                    return 0;
+
+                for(int i = 0; i < x->count; i++) {
+                    //If any element is not equal then bail
+                    if(!lval_eq(x->cell[i], y->cell[i]))
+                        return 0;
+                }
+
+                //Otherwise lists must be equal
+                return 1;
+                break;
+        }
+
+        //If we're here, bail since something went wrong
+        return 0;
+    }
+
+    lval* builtin_cmp(lenv* env, lval* args, char* op) {
+        LASSERT_NUM(op, args, 2);
+
+        int cmpResult = 0;
+
+        if(strcmp(op, "==") == 0) {
+            cmpResult = lval_eq(args->cell[0], args->cell[1]);
+        }
+
+        if(strcmp(op, "!=") == 0) {
+            cmpResult = !lval_eq(args->cell[0], args->cell[1]);
+        }
+
+        lval_del(args);
+
+        return lval_num(cmpResult);
+    }
+
+    lval* builtin_eq(lenv* env, lval* args) {
+        return builtin_cmp(env, args, "==");
+    }
+
+    lval* builtin_ne(lenv* env, lval* args) {
+        return builtin_cmp(env, args, "!=");
+    }
+
+    lval* builtin_if(lenv* env, lval* args) {
+        LASSERT_NUM("if", args, 3);
+        LASSERT_TYPE("if", args, 0, LVAL_NUM);
+        LASSERT_TYPE("if", args, 1, LVAL_QEXPR);
+        LASSERT_TYPE("if", args, 2, LVAL_QEXPR);
+
+        //Mark both expressions as evaluable
+        lval* x;
+        args->cell[1]->type = LVAL_SEXPR;
+        args->cell[2]->type = LVAL_SEXPR;
+
+        if(args->cell[0]->num) {
+            //If condition is true evaluate first expression
+            x = lval_eval(env, lval_pop(args, 1));
+        } else {
+            //Otherwise evaluate second expression
+            x = lval_eval(env, lval_pop(args, 2));
+        }
+
+        //Delete argument list and return
+        lval_del(args);
+
+        return x;
+    }
+
+/* Add builtins to the environment */
     void lenv_add_builtin(lenv* env, char* name, lbuiltin func) {
         lval* k = lval_sym(name);
         lval* v = lval_fun(func);
@@ -754,6 +899,15 @@ void add_history(char* unused) {}
         lenv_add_builtin(env, "\\",  builtin_lambda);
         lenv_add_builtin(env, "def", builtin_def);
         lenv_add_builtin(env, "=", builtin_put);
+
+        //Comparison Functions
+        lenv_add_builtin(env, "if", builtin_if);
+        lenv_add_builtin(env, "==", builtin_eq);
+        lenv_add_builtin(env, "!=", builtin_ne);
+        lenv_add_builtin(env, ">",  builtin_gt);
+        lenv_add_builtin(env, "<",  builtin_lt);
+        lenv_add_builtin(env, ">=", builtin_gte);
+        lenv_add_builtin(env, "<=", builtin_lte);
     }
 
     lval* lval_eval_sexpr(lenv* env, lval* val) {
