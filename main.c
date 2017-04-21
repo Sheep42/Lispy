@@ -1264,6 +1264,22 @@ int main(int argc, char** argv) {
     lenv* env = lenv_new();
     lenv_add_builtins(env);
 
+   /* Set up stdlib */
+   mpc_result_t r;
+   if(mpc_parse("<stdin>", "load \"stdlib.dlsp\"", Lispy, &r)) {
+        /* Evaluate the Abstract Syntax Tree from output */
+        lval* evalResult = lval_eval(env, lval_read(r.output));
+
+        lval_del(evalResult);
+
+        /* Delete the result when we are done */
+        mpc_ast_delete(r.output);
+    } else {
+        /* Otherwise print the error */
+        mpc_err_print(r.error);
+        mpc_err_delete(r.error);
+    }
+
     if(argc >= 2) {
         //Loop over each supplied filename (starting from 1)
         for(int i = 1; i < argc; i++) {
